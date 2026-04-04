@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RPi4 Live Camera</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #111;
+        color: #fff;
+        text-align: center;
+      }
+      header {
+        padding: 12px;
+      }
+      img {
+        width: min(92vw, 960px);
+        height: auto;
+        border: 2px solid #444;
+        border-radius: 6px;
+      }
+      a {
+        color: #7fd1ff;
+      }
+      #error-display {
+        width: min(92vw, 960px);
+        max-width: 100%;
+        box-sizing: border-box;
+        margin: 12px auto;
+        padding: 12px;
+        background: #ffcccc;
+        border: 1px solid #ff9999;
+        border-radius: 6px;
+        color: #8b0000;
+        display: none;
+        word-wrap: break-word;
+      }
+      #error-display.show {
+        display: block;
+      }
+      #connection-display {
+        width: min(92vw, 960px);
+        max-width: 100%;
+        box-sizing: border-box;
+        margin: 12px auto;
+        padding: 12px;
+        background: #ccffcc;
+        border: 1px solid #99ff99;
+        border-radius: 6px;
+        color: #008000;
+        display: none;
+        word-wrap: break-word;
+        transition: opacity 0.5s ease-out;
+      }
+      #connection-display.show {
+        display: block;
+        opacity: 1;
+      }
+      #connection-display.fade-out {
+        opacity: 0;
+      }
+      #reconnect-display {
+        width: min(92vw, 960px);
+        max-width: 100%;
+        box-sizing: border-box;
+        margin: 12px auto;
+        padding: 12px;
+        background: #ffffcc;
+        border: 1px solid #ffff99;
+        border-radius: 6px;
+        color: #ff8800;
+        display: none;
+        word-wrap: break-word;
+        font-weight: bold;
+      }
+      #reconnect-display.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h2>Live Web Camera</h2>
+      <p><form action="/logout" method="get" style="display:inline;"><button type="submit" style="padding:6px 16px;font-size:1.1em;background:#333;color:#fff;border:1px solid #333;cursor:pointer;font-weight:normal;">Logout</button></form></p>
+    </header>
+    <img src="/stream" alt="Live camera stream" id="camera-image" />
+    <div id="error-display"></div>
+    <div id="reconnect-display"></div>
+    <div id="connection-display"></div>
+    <script>
+      let lastConnectionTime = 0;
+      let connectionFadeTimeout = null;
+
+      // Fetch camera error messages every 2 seconds.
+      async function updateCameraError() {
+        try {
+          const response = await fetch('/camera_error');
+          if (response.ok) {
+            const data = await response.json();
+            const errorDisplay = document.getElementById('error-display');
+            const connectionDisplay = document.getElementById('connection-display');
+            const reconnectDisplay = document.getElementById('reconnect-display');
+            
+            if (data.error && data.error.trim() !== '') {
+              errorDisplay.textContent = 'Error: ' + data.error;
+              errorDisplay.classList.add('show');
+            } else {
+              errorDisplay.classList.remove('show');
+            }
+
+            // Handle reconnect message (show when camera not connected)
+            if (data.reconnect_message && data.reconnect_message.trim() !== '') {
+              reconnectDisplay.textContent = data.reconnect_message;
+              reconnectDisplay.classList.add('show');
+            } else {
+              reconnectDisplay.classList.remove('show');
+            }
+
+            // Handle connection message — use timestamp to detect new events
+            if (data.connection_message && data.connection_time && data.connection_time !== lastConnectionTime) {
+              lastConnectionTime = data.connection_time;
+              connectionDisplay.textContent = data.connection_message;
+              connectionDisplay.classList.remove('fade-out');
+              connectionDisplay.classList.add('show');
+
+              // Clear previous timeout if any
+              if (connectionFadeTimeout) {
+                clearTimeout(connectionFadeTimeout);
+              }
+
+              // Fade out after 3 seconds
+              connectionFadeTimeout = setTimeout(() => {
+                connectionDisplay.classList.add('fade-out');
+              }, 3000);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch camera error:', e);
+        }
+      }
+      
+      // Update on page load and then every 2 seconds.
+      updateCameraError();
+      setInterval(updateCameraError, 2000);
+    </script>
+  </body>
+</html>

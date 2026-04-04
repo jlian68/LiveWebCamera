@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RPi4 Camera Login</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #f4f4f4;
+      }
+      .box {
+        max-width: 340px;
+        margin: 12vh auto;
+        background: #fff;
+        border: 1px solid #ddd;
+        padding: 20px;
+      }
+      h2 {
+        margin-top: 0;
+      }
+      input {
+        width: 100%;
+        margin-bottom: 10px;
+        padding: 9px;
+        box-sizing: border-box;
+      }
+      button {
+        width: 100%;
+        padding: 10px;
+      }
+      .err {
+        color: #b00020;
+        margin-bottom: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>Camera Login</h2>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <form method="POST" action="/login">
+        <input type="text" name="username" placeholder="Username" required />
+        <input type="password" name="password" placeholder="Password" required />
+        <button type="submit">Log in</button>
+      </form>
+    </div>
+  </body>
+</html>
