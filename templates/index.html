@@ -23,7 +23,7 @@
 
     <div class="info-bar">
       <span id="status" class="status-dot online"></span>
-      <span>Camera stream active</span>
+      <span id="status-text">Camera stream active</span>
     </div>
   </main>
 
@@ -37,19 +37,20 @@
 
   <script>
     // Show an offline indicator when the stream image fails to load.
-    const img = document.getElementById("stream");
-    const dot = document.getElementById("status");
+    const img    = document.getElementById("stream");
+    const dot    = document.getElementById("status");
+    const label  = document.getElementById("status-text");
 
     img.addEventListener("error", () => {
       dot.classList.remove("online");
       dot.classList.add("offline");
-      dot.nextSibling.textContent = "  Camera stream unavailable";
+      label.textContent = "Camera stream unavailable";
     });
 
     img.addEventListener("load", () => {
       dot.classList.remove("offline");
       dot.classList.add("online");
-      dot.nextSibling.textContent = "  Camera stream active";
+      label.textContent = "Camera stream active";
     });
   </script>
 </body>

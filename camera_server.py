@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Single shared camera instance – opened once, reused across all stream requests.
+_camera: "VideoCamera | None" = None
+
 
 class VideoCamera:
     """Wraps an OpenCV VideoCapture and provides JPEG‑encoded frames."""
@@ -59,6 +62,14 @@ class VideoCamera:
         logger.info("Camera released.")
 
 
+def get_camera() -> VideoCamera:
+    """Return the shared VideoCamera, creating it on first call."""
+    global _camera
+    if _camera is None:
+        _camera = VideoCamera()
+    return _camera
+
+
 def generate_mjpeg(camera: VideoCamera):
     """Generator that yields an infinite MJPEG stream from *camera*."""
     boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
@@ -80,10 +91,9 @@ def index():
 
 @app.route("/video_feed")
 def video_feed():
-    """Return a streaming MJPEG response."""
-    camera = VideoCamera()
+    """Return a streaming MJPEG response using the shared camera instance."""
     return Response(
-        generate_mjpeg(camera),
+        generate_mjpeg(get_camera()),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -91,6 +101,9 @@ def video_feed():
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Initialise the camera before accepting connections so startup errors are
+    # reported immediately rather than on the first streaming request.
+    get_camera()
     logger.info("Starting LiveWebCamera server on http://%s:%d", SERVER_HOST, SERVER_PORT)
     logger.info("Open a browser and navigate to http://<Pi-IP-address>:%d", SERVER_PORT)
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False, threaded=True)
