@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiveWebCamera</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <h1>&#127909; LiveWebCamera</h1>
+    <p class="subtitle">Live stream from Raspberry Pi 4</p>
+  </header>
+
+  <main>
+    <div class="camera-container">
+      <img
+        src="{{ url_for('video_feed') }}"
+        alt="Live camera feed"
+        id="stream"
+      />
+    </div>
+
+    <div class="info-bar">
+      <span id="status" class="status-dot online"></span>
+      <span>Camera stream active</span>
+    </div>
+  </main>
+
+  <footer>
+    <p>
+      Capstone project &mdash;
+      <em>An Introduction to Programming the Internet of Things (IOT) Specialization</em>
+      &middot; Coursera / UC&nbsp;Irvine
+    </p>
+  </footer>
+
+  <script>
+    // Show an offline indicator when the stream image fails to load.
+    const img = document.getElementById("stream");
+    const dot = document.getElementById("status");
+
+    img.addEventListener("error", () => {
+      dot.classList.remove("online");
+      dot.classList.add("offline");
+      dot.nextSibling.textContent = "  Camera stream unavailable";
+    });
+
+    img.addEventListener("load", () => {
+      dot.classList.remove("offline");
+      dot.classList.add("online");
+      dot.nextSibling.textContent = "  Camera stream active";
+    });
+  </script>
+</body>
+</html>
