@@ -1,5 +1,6 @@
 from flask import Response, Flask, redirect, render_template, request, session, url_for
 from threading import Lock
+from waitress import serve
 import cv2
 import logging
 import signal
@@ -28,8 +29,11 @@ USERNAME = "admin"
 PASSWORD = "rpi4cam"
 
 try:
-    cv2.setLogLevel(cv2.LOG_LEVEL_ERROR)
-except AttributeError:
+    set_log_level = getattr(cv2, "setLogLevel", None)
+    log_level_error = getattr(cv2, "LOG_LEVEL_ERROR", None)
+    if callable(set_log_level) and log_level_error is not None:
+        set_log_level(log_level_error)
+except Exception:
     pass
 
 
@@ -284,4 +288,4 @@ def handle_sigint(_sig, _frame):
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, handle_sigint)
-    app.run(host="0.0.0.0", port=5001, debug=False, threaded=True, use_reloader=False)
+    serve(app, host="0.0.0.0", port=5001, threads=8)
