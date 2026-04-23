@@ -1,16 +1,18 @@
 from flask import Response, Flask, redirect, render_template, request, session, url_for
 from threading import Lock
 from waitress import serve
+import os
+
+# Keep OpenCV logs quiet so terminal output stays focused on app-level messages.
+# These env vars must be set before importing cv2.
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
+
 import cv2
 import logging
 import signal
 import sys
 import time
-import os
-
-# Keep OpenCV logs quiet so terminal output stays focused on app-level messages.
-os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
-os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
 
 app = Flask(__name__)
 app.secret_key = "secret_password_for_sessions"
@@ -41,6 +43,7 @@ class CameraStream:
     """Thread-safe OpenCV camera wrapper that returns JPEG frames."""
 
     _JPEG_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, 80]
+    _HIDDEN_ERRORS = {"Camera not initialized", "Camera not available", "Camera disconnected"}
 
     def __init__(self, device_index: int = 0):
         self.device_index = device_index
@@ -60,24 +63,35 @@ class CameraStream:
         self._last_error = message
         if message != self._last_logged_error:
             self._last_logged_error = message
-            print(f"[camera] {message}")
+            print(f"{message}")
 
     def _set_connected(self):
+        was_reconnecting = self._was_connected and self._last_error in {
+            "Camera disconnected",
+            "Camera not available",
+            "Camera not initialized",
+        }
         self._read_failures = 0
         self._last_error = ""
         self._last_logged_error = ""
         self._was_connected = True
-        self._last_connection_message = "Camera connected"
+        self._last_connection_message = "Camera reconnected" if was_reconnecting else "Camera connected"
         self._connection_message_time = time.monotonic()
-        print("[camera] Camera connected")
+        print(f"{self._last_connection_message}")
 
     @staticmethod
     def _is_open(capture) -> bool:
         return capture is not None and capture.isOpened()
 
+    def _release_capture_unlocked(self):
+        active_capture = self.capture
+        if active_capture is not None and active_capture.isOpened():
+            active_capture.release()
+        self.capture = None
+
     def get_last_error(self):
         with self._lock:
-            if self._last_error in {"Camera not initialized", "Camera not available", "Camera disconnected"}:
+            if self._last_error in self._HIDDEN_ERRORS:
                 return ""
             return self._last_error
 
@@ -95,9 +109,9 @@ class CameraStream:
                 return "Camera disconnected. Waiting for reconnection..."
             return "Waiting for a camera to be connected..."
 
-    def _open_capture(self, source):
+    def _open_capture(self):
         # V4L2 is the native Linux backend for USB cameras on Raspberry Pi/Linux.
-        cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
+        cap = cv2.VideoCapture(self.device_source, cv2.CAP_V4L2)
         if not cap.isOpened():
             cap.release()
             return None
@@ -121,7 +135,7 @@ class CameraStream:
             if self._is_open(self.capture):
                 return True
 
-            cap = self._open_capture(self.device_source)
+            cap = self._open_capture()
             if cap is None:
                 self._set_error("Camera not available")
                 return False
@@ -148,10 +162,7 @@ class CameraStream:
                 # Short camera hiccups can happen; only drop the capture after
                 # repeated failures so transient glitches do not force reconnect.
                 if self._read_failures >= self._max_read_failures:
-                    active_capture = self.capture
-                    if active_capture is not None and active_capture.isOpened():
-                        active_capture.release()
-                    self.capture = None
+                    self._release_capture_unlocked()
                     self._set_error("Camera disconnected")
             return None
 
@@ -166,10 +177,7 @@ class CameraStream:
 
     def release(self):
         with self._lock:
-            active_capture = self.capture
-            if active_capture is not None and active_capture.isOpened():
-                active_capture.release()
-            self.capture = None
+            self._release_capture_unlocked()
             self._read_failures = 0
             self._paused = True
 
@@ -183,24 +191,23 @@ def is_logged_in() -> bool:
 
 @app.route("/", methods=["GET"])
 def home():
-    if is_logged_in():
-        return redirect(url_for("video_page"))
-    return redirect(url_for("login"))
+    return redirect(url_for("video_page" if is_logged_in() else "login"))
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "POST":
-        username = request.form.get("username", "")
-        password = request.form.get("password", "")
+    if request.method != "POST":
+        return render_template("cam_login.html", error=None)
 
-        if username == USERNAME and password == PASSWORD:
-            session["logged_in"] = True
-            return redirect(url_for("video_page"))
+    username = request.form.get("username", "")
+    password = request.form.get("password", "")
 
-        return render_template("cam_login.html", error="Invalid username or password")
+    if username == USERNAME and password == PASSWORD:
+        session["logged_in"] = True
+        print("User logged in")
+        return redirect(url_for("video_page"))
 
-    return render_template("cam_login.html", error=None)
+    return render_template("cam_login.html", error="Invalid username or password")
 
 
 @app.route("/video", methods=["GET"])
@@ -214,6 +221,16 @@ _STREAM_FPS = 30
 _FRAME_INTERVAL = 1.0 / _STREAM_FPS
 _RECONNECT_DELAY = 2.0
 _TRANSIENT_READ_DELAY = 0.05
+
+
+def _sleep_to_next_frame(next_frame: float) -> float:
+    # Keep output near target FPS by sleeping only the remaining frame time.
+    next_frame += _FRAME_INTERVAL
+    sleep_for = next_frame - time.monotonic()
+    if sleep_for > 0:
+        time.sleep(sleep_for)
+        return next_frame
+    return time.monotonic()
 
 
 def generate_mjpeg():
@@ -230,10 +247,8 @@ def generate_mjpeg():
 
         frame_bytes = camera.read_jpeg()
         if frame_bytes is None:
-            if not camera.is_active():
-                time.sleep(_RECONNECT_DELAY)
-            else:
-                time.sleep(_TRANSIENT_READ_DELAY)
+            delay = _RECONNECT_DELAY if not camera.is_active() else _TRANSIENT_READ_DELAY
+            time.sleep(delay)
             next_frame = time.monotonic()
             continue
 
@@ -241,14 +256,7 @@ def generate_mjpeg():
             b"--frame\r\n"
             b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
         )
-
-        # Keep output near target FPS by sleeping only the remaining frame time.
-        next_frame += _FRAME_INTERVAL
-        sleep_for = next_frame - time.monotonic()
-        if sleep_for > 0:
-            time.sleep(sleep_for)
-        else:
-            next_frame = time.monotonic()
+        next_frame = _sleep_to_next_frame(next_frame)
 
 
 @app.route("/stream", methods=["GET"])
@@ -276,12 +284,13 @@ def camera_error():
 @app.route("/logout", methods=["GET"])
 def logout():
     camera.release()
+    print("User logged out")
     session.clear()
     return redirect(url_for("login"))
 
 
 def handle_sigint(_sig, _frame):
-    print("\nTerminated...")
+    print("\nApp terminated...")
     camera.release()
     sys.exit(0)
 
